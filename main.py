@@ -1,37 +1,62 @@
 import os
 import shutil
-import zipfile
 import subprocess
-from fastapi import FastAPI, UploadFile, File
+from fastapi import FastAPI, UploadFile, File, Form
 from telegram import Bot
 
+# ==================================================
+# CONFIG TELEGRAM
+# ==================================================
 BOT_TOKEN = "8547405964:AAF3xsaRQlUAeFmdRjIRntCw7hDyFClduus"
 CHAT_ID   = "8214639314"
-
 bot = Bot(token=BOT_TOKEN)
 
+# ==================================================
+# FASTAPI
+# ==================================================
 app = FastAPI()
 
-@app.post("/upload-zip")
-async def upload_zip(file: UploadFile = File(...)):
+# ==================================================
+# ENDPOINT 1:
+# RECIBIR CADA FOTO INDIVIDUAL
+# ==================================================
+@app.post("/upload-photo")
+async def upload_photo(file: UploadFile = File(...), index: int = Form(...)):
 
-    if os.path.exists("photos"):
-        shutil.rmtree("photos")
+    # crear carpeta si no existe
     os.makedirs("photos", exist_ok=True)
 
-    zip_path = "batch.zip"
-    with open(zip_path, "wb") as z:
-        z.write(await file.read())
+    # ruta de la foto
+    path = f"photos/photo_{index:02d}.jpg"
 
-    with zipfile.ZipFile(zip_path, "r") as zip_ref:
-        zip_ref.extractall("photos")
+    # guardar foto
+    with open(path, "wb") as f:
+        f.write(await file.read())
+
+    print(f"Foto recibida: {path}")
+    return {"status": "ok", "index": index}
+
+
+# ==================================================
+# ENDPOINT 2:
+# GENERAR VIDEO MP4 Y ENVIARLO A TELEGRAM
+# ==================================================
+@app.post("/render-video")
+async def render_video():
+
+    # asegurar que hay fotos
+    if not os.path.exists("photos"):
+        return {"error": "No hay carpeta de fotos"}
 
     images = sorted([f for f in os.listdir("photos") if f.endswith(".jpg")])
-    if not images:
-        return {"error": "ZIP vacío o sin imágenes JPG"}
+    if len(images) == 0:
+        return {"error": "No hay fotos JPG"}
+
+    print(f"{len(images)} fotos encontradas, creando video...")
 
     output = "video.mp4"
 
+    # crear video con ffmpeg
     subprocess.run([
         "ffmpeg",
         "-y",
@@ -43,11 +68,18 @@ async def upload_zip(file: UploadFile = File(...)):
         output
     ], check=True)
 
-    with open(output, "rb") as v:
-        bot.send_video(chat_id=CHAT_ID, video=v)
+    print("Vídeo creado, enviando a Telegram...")
 
+    # enviar vídeo a telegram
+    with open(output, "rb") as v:
+        bot.send_video(chat_id=CHAT_ID, video=v, supports_streaming=True)
+
+    print("Vídeo enviado.")
+
+    # limpiar
     shutil.rmtree("photos")
-    os.remove(zip_path)
     os.remove(output)
 
-    return {"status": "ok", "msg": "Video enviado a Telegram"}
+    print("Limpieza completada.")
+
+    return {"status": "video enviado", "fotos": len(images)}
